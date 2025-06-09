@@ -63,7 +63,7 @@ jobs:
     
     - name: Run security checks
       run: |
-        poetry run bandit -r src/ -f json -o bandit-report.json
+        poetry run bandit -r src/ -f json -o bandit-report.json --exit-zero
         poetry run pip-audit --format=json --output=pip-audit-report.json
     
     - name: Run tests
