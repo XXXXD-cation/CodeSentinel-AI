@@ -13,8 +13,6 @@ app = FastAPI(
 )
 
 
-
-
 @app.get("/")
 def root() -> dict[str, str]:
     """健康检查接口"""
