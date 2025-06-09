@@ -13,9 +13,9 @@ app = FastAPI(
 )
 
 
-from typing import Dict
+
 
 @app.get("/")
-def root() -> Dict[str, str]:
+def root() -> dict[str, str]:
     """健康检查接口"""
     return {"message": "CodeSentinel-AI 服务已启动"}
