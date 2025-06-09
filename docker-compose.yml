@@ -1,0 +1,169 @@
+version: '3.8'
+
+services:
+  # 主应用服务
+  app:
+    build:
+      context: .
+      target: development
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+      - app_data:/app/data
+      - app_logs:/app/logs
+    environment:
+      - ENV=development
+      - REDIS_URL=redis://redis:6379
+      - DATABASE_URL=sqlite:///./data/codesentinel.db
+      - CHROMA_PERSIST_DIR=/app/data/chroma
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - codesentinel_network
+    restart: unless-stopped
+
+  # Redis服务 (消息队列和缓存)
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-redis123}
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - codesentinel_network
+    restart: unless-stopped
+
+  # Celery Worker服务
+  celery_worker:
+    build:
+      context: .
+      target: development
+    command: celery -A src.codesentinel.tasks.celery_app worker --loglevel=info --concurrency=4
+    volumes:
+      - .:/app
+      - app_data:/app/data
+      - app_logs:/app/logs
+    environment:
+      - ENV=development
+      - REDIS_URL=redis://redis:6379
+      - DATABASE_URL=sqlite:///./data/codesentinel.db
+      - CHROMA_PERSIST_DIR=/app/data/chroma
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - codesentinel_network
+    restart: unless-stopped
+
+  # Celery Beat服务 (定时任务调度)
+  celery_beat:
+    build:
+      context: .
+      target: development
+    command: celery -A src.codesentinel.tasks.celery_app beat --loglevel=info
+    volumes:
+      - .:/app
+      - app_data:/app/data
+      - app_logs:/app/logs
+    environment:
+      - ENV=development
+      - REDIS_URL=redis://redis:6379
+      - DATABASE_URL=sqlite:///./data/codesentinel.db
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - codesentinel_network
+    restart: unless-stopped
+
+  # Flower服务 (Celery监控)
+  flower:
+    build:
+      context: .
+      target: development
+    command: celery -A src.codesentinel.tasks.celery_app flower --port=5555
+    ports:
+      - "5555:5555"
+    environment:
+      - ENV=development
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - codesentinel_network
+    restart: unless-stopped
+
+  # Prometheus监控服务
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    networks:
+      - codesentinel_network
+    restart: unless-stopped
+
+  # Grafana可视化服务
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin123}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    networks:
+      - codesentinel_network
+    restart: unless-stopped
+
+  # Nginx反向代理
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf
+      - ./nginx/ssl:/etc/nginx/ssl
+    depends_on:
+      - app
+    networks:
+      - codesentinel_network
+    restart: unless-stopped
+
+volumes:
+  app_data:
+    driver: local
+  app_logs:
+    driver: local
+  redis_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+
+networks:
+  codesentinel_network:
+    driver: bridge

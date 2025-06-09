@@ -1,0 +1,361 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://api.scanner.company.com/schemas/data_model.schema.json",
+  "title": "源码漏洞扫描系统 MVP数据交换格式",
+  "description": "基于多智能体协作的源码漏洞扫描与管理系统的MVP版本数据交换格式规范",
+  "version": "1.0.0",
+  "type": "object",
+  "required": [
+    "task_id",
+    "timestamp",
+    "status",
+    "repository"
+  ],
+  "properties": {
+    "task_id": {
+      "type": "string",
+      "pattern": "^scan_[0-9]{8}_[0-9]{3}$",
+      "description": "扫描任务的唯一标识符，格式为scan_YYYYMMDD_XXX",
+      "examples": ["scan_20240115_001", "scan_20240115_002"]
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "数据生成时间戳，符合ISO 8601格式",
+      "examples": ["2024-01-15T10:08:00Z"]
+    },
+    "status": {
+      "type": "string",
+      "enum": ["pending", "running", "completed", "failed"],
+      "description": "扫描任务的执行状态"
+    },
+    "repository": {
+      "type": "object",
+      "required": ["url", "branch"],
+      "properties": {
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "pattern": "^https://github\\.com/[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+\\.git$",
+          "description": "Git仓库的完整URL地址，目前只支持GitHub公开仓库",
+          "examples": ["https://github.com/example/demo-project.git"]
+        },
+        "branch": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9_.-]+$",
+          "minLength": 1,
+          "maxLength": 100,
+          "description": "扫描的Git分支名称",
+          "examples": ["main", "develop", "feature/security-fix"]
+        },
+        "commit_sha": {
+          "type": ["string", "null"],
+          "pattern": "^[a-f0-9]{40}$|^[a-f0-9]{7}$",
+          "description": "扫描时的提交SHA值，失败时可能为null",
+          "examples": ["abc123def456789012345678901234567890abcd", "abc123d"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "project_info": {
+      "type": "object",
+      "required": ["languages", "file_count", "total_lines"],
+      "properties": {
+        "languages": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "Java", "Python", "JavaScript", "Go", "TypeScript", 
+              "C", "C++", "PHP", "Ruby", "C#", "Kotlin", "Swift", 
+              "Rust", "Scala", "Dart"
+            ]
+          },
+          "minItems": 1,
+          "uniqueItems": true,
+          "description": "项目中检测到的编程语言列表",
+          "examples": [["Java", "JavaScript"], ["Python"], ["Go", "TypeScript"]]
+        },
+        "file_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "扫描的源代码文件总数",
+          "examples": [245, 52, 1024]
+        },
+        "total_lines": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "扫描的源代码总行数",
+          "examples": [15420, 3200, 50000]
+        }
+      },
+      "additionalProperties": false
+    },
+    "scan_results": {
+      "type": "object",
+      "required": ["scan_tool", "scan_duration", "findings_count", "findings"],
+      "properties": {
+        "scan_tool": {
+          "type": "string",
+          "enum": ["semgrep"],
+          "description": "使用的扫描工具名称"
+        },
+        "scan_duration": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "扫描执行耗时（秒）",
+          "examples": [120, 45, 300]
+        },
+        "findings_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "发现的安全问题总数",
+          "examples": [0, 3, 15]
+        },
+        "findings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SecurityFinding"
+          },
+          "description": "扫描发现的安全问题详细列表"
+        }
+      },
+      "additionalProperties": false
+    },
+    "error": {
+      "type": "object",
+      "required": ["code", "message", "details"],
+      "properties": {
+        "code": {
+          "type": "string",
+          "enum": [
+            "GIT_CLONE_FAILED",
+            "SCAN_TIMEOUT", 
+            "UNSUPPORTED_LANGUAGE",
+            "INTERNAL_ERROR",
+            "NETWORK_ERROR",
+            "PERMISSION_DENIED"
+          ],
+          "description": "标准化错误代码"
+        },
+        "message": {
+          "type": "string",
+          "minLength": 5,
+          "maxLength": 200,
+          "description": "错误的简要描述信息",
+          "examples": ["Git仓库克隆失败", "扫描超时", "不支持的编程语言"]
+        },
+        "details": {
+          "type": "string",
+          "maxLength": 1000,
+          "description": "错误的详细信息和建议解决方案",
+          "examples": ["权限被拒绝：请确保仓库为公开仓库或提供正确的访问凭据"]
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "if": {
+    "properties": {
+      "status": {
+        "const": "completed"
+      }
+    }
+  },
+  "then": {
+    "required": ["project_info", "scan_results"],
+    "not": {
+      "required": ["error"]
+    }
+  },
+  "else": {
+    "if": {
+      "properties": {
+        "status": {
+          "const": "failed"
+        }
+      }
+    },
+    "then": {
+      "required": ["error"],
+      "not": {
+        "anyOf": [
+          {"required": ["project_info"]},
+          {"required": ["scan_results"]}
+        ]
+      }
+    },
+    "else": {
+      "if": {
+        "properties": {
+          "status": {
+            "enum": ["pending", "running"]
+          }
+        }
+      },
+      "then": {
+        "not": {
+          "anyOf": [
+            {"required": ["project_info"]},
+            {"required": ["scan_results"]},
+            {"required": ["error"]}
+          ]
+        }
+      }
+    }
+  },
+  "$defs": {
+    "SecurityFinding": {
+      "type": "object",
+      "required": [
+        "rule_id",
+        "severity", 
+        "message",
+        "file_path",
+        "line_number",
+        "code_snippet",
+        "category"
+      ],
+      "properties": {
+        "rule_id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z][a-zA-Z0-9._-]*$",
+          "description": "扫描规则的唯一标识符",
+          "examples": [
+            "java.lang.security.audit.sql-injection",
+            "javascript.express.security.audit.xss",
+            "python.django.security.audit.hardcoded-password"
+          ]
+        },
+        "severity": {
+          "type": "string",
+          "enum": ["HIGH", "MEDIUM", "LOW"],
+          "description": "安全问题的严重程度等级"
+        },
+        "message": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 500,
+          "description": "安全问题的描述信息",
+          "examples": [
+            "Potential SQL injection vulnerability",
+            "Potential XSS vulnerability in template rendering",
+            "Hardcoded password detected"
+          ]
+        },
+        "file_path": {
+          "type": "string",
+          "pattern": "^[^/].*",
+          "description": "发现问题的文件相对路径",
+          "examples": [
+            "src/main/java/UserController.java",
+            "frontend/src/components/UserProfile.js",
+            "app/models/user.py"
+          ]
+        },
+        "line_number": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "问题所在的行号",
+          "examples": [45, 23, 156]
+        },
+        "code_snippet": {
+          "type": "string",
+          "maxLength": 1000,
+          "description": "包含问题的代码片段",
+          "examples": [
+            "String query = \"SELECT * FROM users WHERE id = \" + userId;",
+            "innerHTML = userInput",
+            "password = \"admin123\""
+          ]
+        },
+        "category": {
+          "type": "string",
+          "enum": ["security", "quality", "performance", "maintainability"],
+          "description": "问题分类",
+          "default": "security"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "examples": [
+    {
+      "task_id": "scan_20240115_001",
+      "timestamp": "2024-01-15T10:08:00Z",
+      "status": "completed",
+      "repository": {
+        "url": "https://github.com/example/demo-project.git",
+        "branch": "main",
+        "commit_sha": "abc123def456789012345678901234567890abcd"
+      },
+      "project_info": {
+        "languages": ["Java", "JavaScript"],
+        "file_count": 245,
+        "total_lines": 15420
+      },
+      "scan_results": {
+        "scan_tool": "semgrep",
+        "scan_duration": 120,
+        "findings_count": 2,
+        "findings": [
+          {
+            "rule_id": "java.lang.security.audit.sql-injection",
+            "severity": "HIGH",
+            "message": "Potential SQL injection vulnerability",
+            "file_path": "src/main/java/UserController.java",
+            "line_number": 45,
+            "code_snippet": "String query = \"SELECT * FROM users WHERE id = \" + userId;",
+            "category": "security"
+          },
+          {
+            "rule_id": "javascript.express.security.audit.xss",
+            "severity": "MEDIUM", 
+            "message": "Potential XSS vulnerability in template rendering",
+            "file_path": "frontend/src/components/UserProfile.js",
+            "line_number": 23,
+            "code_snippet": "innerHTML = userInput",
+            "category": "security"
+          }
+        ]
+      }
+    },
+    {
+      "task_id": "scan_20240115_002",
+      "timestamp": "2024-01-15T10:05:00Z",
+      "status": "failed",
+      "repository": {
+        "url": "https://github.com/example/private-repo.git",
+        "branch": "main",
+        "commit_sha": null
+      },
+      "error": {
+        "code": "GIT_CLONE_FAILED",
+        "message": "Git仓库克隆失败",
+        "details": "权限被拒绝：请确保仓库为公开仓库或提供正确的访问凭据"
+      }
+    },
+    {
+      "task_id": "scan_20240115_003",
+      "timestamp": "2024-01-15T10:12:00Z",
+      "status": "completed",
+      "repository": {
+        "url": "https://github.com/example/clean-project.git",
+        "branch": "main",
+        "commit_sha": "def456abc789012345678901234567890123abcd"
+      },
+      "project_info": {
+        "languages": ["Python"],
+        "file_count": 52,
+        "total_lines": 3200
+      },
+      "scan_results": {
+        "scan_tool": "semgrep",
+        "scan_duration": 45,
+        "findings_count": 0,
+        "findings": []
+      }
+    }
+  ]
+}

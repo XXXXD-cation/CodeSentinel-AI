@@ -1,0 +1,743 @@
+openapi: 3.0.3
+info:
+  title: 源码漏洞扫描系统 API
+  description: |
+    基于多智能体协作的源码漏洞扫描与管理系统的MVP版本API规范。
+    
+    该系统通过项目经理智能体和代码分析智能体的协作，提供端到端的源码安全扫描服务。
+    
+    **核心功能:**
+    - 支持Git仓库的自动克隆和扫描
+    - 集成Semgrep进行静态代码分析
+    - 提供标准化的扫描结果输出
+    
+  version: 1.0.0
+  contact:
+    name: 开发团队
+    email: dev-team@company.com
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: http://localhost:8080
+    description: 开发环境
+  - url: https://api.scanner.company.com
+    description: 生产环境
+
+tags:
+  - name: scan
+    description: 扫描任务管理
+  - name: monitoring
+    description: 系统监控
+
+paths:
+  /api/v1/scan:
+    post:
+      tags:
+        - scan
+      summary: 启动源码漏洞扫描
+      description: |
+        接收Git仓库信息并启动一次完整的源码安全扫描任务。
+        
+        **工作流程:**
+        1. 验证请求参数
+        2. 生成唯一任务ID
+        3. 初始化扫描任务
+        4. 调度代码分析智能体
+        5. 返回任务ID和状态
+        
+        **支持的代码语言:** Java, Python, JavaScript, Go
+        **扫描工具:** Semgrep
+      operationId: createScanTask
+      requestBody:
+        description: 扫描任务配置信息
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScanRequest'
+            examples:
+              basic_scan:
+                summary: 基础扫描请求
+                description: 扫描主分支的标准请求
+                value:
+                  repository_url: "https://github.com/example/demo-project.git"
+                  branch: "main"
+              custom_scan:
+                summary: 自定义扫描ID
+                description: 指定自定义任务标识的请求
+                value:
+                  repository_url: "https://github.com/example/secure-app.git"
+                  branch: "develop"
+                  scan_id: "security-audit-2024"
+      responses:
+        '202':
+          description: |
+            扫描任务已成功接收并进入执行队列。
+            任务将异步执行，客户端可通过返回的task_id查询状态。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScanTaskResponse'
+              examples:
+                success_response:
+                  summary: 成功响应示例
+                  value:
+                    task_id: "scan_20240115_001"
+                    status: "pending"
+                    message: "扫描任务已成功创建并进入队列"
+                    estimated_duration: 600
+        '400':
+          description: |
+            请求参数验证失败。可能的原因包括：
+            - repository_url格式不正确
+            - branch参数为空
+            - scan_id格式不符合规范
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                invalid_url:
+                  summary: 无效的仓库URL
+                  value:
+                    code: "INVALID_REPOSITORY_URL"
+                    message: "提供的repository_url格式不正确"
+                    details: "URL必须是有效的Git仓库地址，支持https协议"
+                    timestamp: "2024-01-15T10:00:00Z"
+                missing_branch:
+                  summary: 缺少分支参数
+                  value:
+                    code: "MISSING_REQUIRED_FIELD"
+                    message: "必需参数branch不能为空"
+                    details: "请提供有效的Git分支名称，如main、develop等"
+                    timestamp: "2024-01-15T10:00:00Z"
+        '429':
+          description: |
+            请求频率过高，触发限流机制。
+            当前系统资源不足，无法处理新的扫描任务。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                rate_limit:
+                  summary: 限流响应
+                  value:
+                    code: "RATE_LIMIT_EXCEEDED"
+                    message: "请求频率过高，请稍后重试"
+                    details: "当前并发扫描任务已达上限，建议5分钟后重试"
+                    timestamp: "2024-01-15T10:00:00Z"
+        '500':
+          description: 服务器内部错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/scan/{task_id}/status:
+    get:
+      tags:
+        - scan
+      summary: 查询扫描任务状态
+      description: |
+        根据任务ID查询扫描任务的当前执行状态。
+        
+        **状态说明:**
+        - `pending`: 任务已创建，等待执行
+        - `running`: 任务正在执行中
+        - `completed`: 任务执行完成
+        - `failed`: 任务执行失败
+        
+        **轮询建议:** 建议每30秒查询一次状态，避免过于频繁的请求
+      operationId: getScanTaskStatus
+      parameters:
+        - name: task_id
+          in: path
+          required: true
+          description: 扫描任务的唯一标识符
+          schema:
+            type: string
+            pattern: '^scan_[0-9]{8}_[0-9]{3}$'
+            example: "scan_20240115_001"
+      responses:
+        '200':
+          description: 成功获取任务状态
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScanStatusResponse'
+              examples:
+                pending_status:
+                  summary: 等待执行状态
+                  value:
+                    task_id: "scan_20240115_001"
+                    status: "pending"
+                    created_at: "2024-01-15T10:00:00Z"
+                    estimated_completion: "2024-01-15T10:10:00Z"
+                running_status:
+                  summary: 正在执行状态
+                  value:
+                    task_id: "scan_20240115_001"
+                    status: "running"
+                    created_at: "2024-01-15T10:00:00Z"
+                    started_at: "2024-01-15T10:02:00Z"
+                    current_stage: "代码克隆完成，正在执行安全扫描"
+                    progress: 65
+                completed_status:
+                  summary: 执行完成状态
+                  value:
+                    task_id: "scan_20240115_001"
+                    status: "completed"
+                    created_at: "2024-01-15T10:00:00Z"
+                    started_at: "2024-01-15T10:02:00Z"
+                    completed_at: "2024-01-15T10:08:00Z"
+                    duration: 360
+                failed_status:
+                  summary: 执行失败状态
+                  value:
+                    task_id: "scan_20240115_001"
+                    status: "failed"
+                    created_at: "2024-01-15T10:00:00Z"
+                    started_at: "2024-01-15T10:02:00Z"
+                    failed_at: "2024-01-15T10:05:00Z"
+                    error_message: "Git仓库克隆失败：权限被拒绝"
+        '404':
+          description: 找不到指定的任务ID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                task_not_found:
+                  summary: 任务不存在
+                  value:
+                    code: "TASK_NOT_FOUND"
+                    message: "找不到指定的扫描任务"
+                    details: "请检查task_id是否正确，或任务是否已被清理"
+                    timestamp: "2024-01-15T10:00:00Z"
+
+  /api/v1/scan/{task_id}/results:
+    get:
+      tags:
+        - scan
+      summary: 获取扫描结果
+      description: |
+        获取已完成扫描任务的详细结果，包括发现的安全问题和统计信息。
+        
+        **注意事项:**
+        - 只有状态为`completed`或`failed`的任务才会返回结果
+        - 对于失败的任务，返回错误详情而非扫描结果
+        - 结果数据较大时建议使用分页或压缩传输
+      operationId: getScanTaskResults  
+      parameters:
+        - name: task_id
+          in: path
+          required: true
+          description: 扫描任务的唯一标识符
+          schema:
+            type: string
+            pattern: '^scan_[0-9]{8}_[0-9]{3}$'
+            example: "scan_20240115_001"
+      responses:
+        '200':
+          description: |
+            成功获取扫描结果。响应内容严格遵循MVP数据交换格式。
+            根据任务执行状态，返回相应的结果数据：
+            - 成功任务：包含完整的扫描结果和统计信息
+            - 失败任务：包含错误详情和失败原因
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScanResultResponse'
+              examples:
+                successful_scan:
+                  summary: 成功扫描结果
+                  description: 包含发现的安全问题的完整扫描结果
+                  value:
+                    task_id: "scan_20240115_001"
+                    timestamp: "2024-01-15T10:08:00Z"
+                    status: "completed"
+                    repository:
+                      url: "https://github.com/example/demo-project.git"
+                      branch: "main"
+                      commit_sha: "abc123def456"
+                    project_info:
+                      languages: ["Java", "JavaScript"]
+                      file_count: 245
+                      total_lines: 15420
+                    scan_results:
+                      scan_tool: "semgrep"
+                      scan_duration: 120
+                      findings_count: 3
+                      findings:
+                        - rule_id: "java.lang.security.audit.sql-injection"
+                          severity: "HIGH"
+                          message: "Potential SQL injection vulnerability"
+                          file_path: "src/main/java/UserController.java"
+                          line_number: 45
+                          code_snippet: "String query = \"SELECT * FROM users WHERE id = \" + userId;"
+                          category: "security"
+                        - rule_id: "javascript.express.security.audit.xss"
+                          severity: "MEDIUM"
+                          message: "Potential XSS vulnerability in template rendering"
+                          file_path: "frontend/src/components/UserProfile.js"
+                          line_number: 23
+                          code_snippet: "innerHTML = userInput"
+                          category: "security"
+                failed_scan:
+                  summary: 失败扫描结果
+                  description: 扫描失败时的错误信息
+                  value:
+                    task_id: "scan_20240115_002"
+                    timestamp: "2024-01-15T10:05:00Z"
+                    status: "failed"
+                    repository:
+                      url: "https://github.com/example/private-repo.git"
+                      branch: "main"
+                      commit_sha: null
+                    error:
+                      code: "GIT_CLONE_FAILED"
+                      message: "Git仓库克隆失败"
+                      details: "权限被拒绝：请确保仓库为公开仓库或提供正确的访问凭据"
+                empty_scan:
+                  summary: 无问题发现
+                  description: 扫描完成但未发现安全问题
+                  value:
+                    task_id: "scan_20240115_003"
+                    timestamp: "2024-01-15T10:12:00Z"
+                    status: "completed"
+                    repository:
+                      url: "https://github.com/example/clean-project.git"
+                      branch: "main"
+                      commit_sha: "def456abc789"
+                    project_info:
+                      languages: ["Python"]
+                      file_count: 52
+                      total_lines: 3200
+                    scan_results:
+                      scan_tool: "semgrep"
+                      scan_duration: 45
+                      findings_count: 0
+                      findings: []
+        '404':
+          description: 找不到指定的任务ID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '425':
+          description: |
+            扫描结果尚未准备好。任务仍在执行中或排队等待。
+            客户端应该等待任务完成后再次请求结果。
+          headers:
+            Retry-After:
+              description: 建议重试的等待时间（秒）
+              schema:
+                type: integer
+                example: 60
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                results_not_ready:
+                  summary: 结果未就绪
+                  value:
+                    code: "RESULTS_NOT_READY"
+                    message: "扫描任务尚未完成，结果暂不可用"
+                    details: "当前任务状态为running，预计还需2分钟完成"
+                    timestamp: "2024-01-15T10:06:00Z"
+
+  /api/v1/health:
+    get:
+      tags:
+        - monitoring
+      summary: 系统健康检查
+      description: 检查系统各组件的运行状态
+      operationId: getSystemHealth
+      responses:
+        '200':
+          description: 系统运行正常
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [healthy, degraded, unhealthy]
+                  timestamp:
+                    type: string
+                    format: date-time
+                  components:
+                    type: object
+                    properties:
+                      project_manager_agent:
+                        type: string
+                        enum: [up, down]
+                      code_analysis_agent:
+                        type: string
+                        enum: [up, down]
+                      semgrep_service:
+                        type: string
+                        enum: [up, down]
+
+components:
+  schemas:
+    ScanRequest:
+      type: object
+      required:
+        - repository_url
+        - branch
+      properties:
+        repository_url:
+          type: string
+          format: uri
+          pattern: '^https://github\.com/[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+\.git$'
+          description: |
+            Git仓库的完整URL地址。
+            目前只支持GitHub公开仓库的HTTPS协议访问。
+          example: "https://github.com/example/demo-project.git"
+        branch:
+          type: string
+          pattern: '^[a-zA-Z0-9_.-]+$'
+          minLength: 1
+          maxLength: 100
+          description: |
+            要扫描的Git分支名称。
+            必须是有效的Git分支名称格式。
+          example: "main"
+        scan_id:
+          type: string
+          pattern: '^[a-zA-Z0-9_-]+$'
+          minLength: 3
+          maxLength: 50
+          description: |
+            用户自定义的扫描任务标识符（可选）。
+            如果不提供，系统将自动生成task_id。
+          example: "security-audit-2024"
+
+    ScanTaskResponse:
+      type: object
+      required:
+        - task_id
+        - status
+        - message
+      properties:
+        task_id:
+          type: string
+          pattern: '^scan_[0-9]{8}_[0-9]{3}$'
+          description: 系统生成的唯一任务标识符
+          example: "scan_20240115_001"
+        status:
+          type: string
+          enum: [pending]
+          description: 任务初始状态，始终为pending
+        message:
+          type: string
+          description: 任务创建成功的确认消息
+          example: "扫描任务已成功创建并进入队列"
+        estimated_duration:
+          type: integer
+          minimum: 60
+          maximum: 1800
+          description: 预估执行时间（秒）
+          example: 600
+
+    ScanStatusResponse:
+      type: object
+      required:
+        - task_id
+        - status
+        - created_at
+      properties:
+        task_id:
+          type: string
+          pattern: '^scan_[0-9]{8}_[0-9]{3}$'
+          description: 任务唯一标识符
+        status:
+          type: string
+          enum: [pending, running, completed, failed]
+          description: |
+            任务当前状态：
+            - pending: 等待执行
+            - running: 正在执行
+            - completed: 执行完成
+            - failed: 执行失败
+        created_at:
+          type: string
+          format: date-time
+          description: 任务创建时间
+        started_at:
+          type: string
+          format: date-time
+          description: 任务开始执行时间（仅在running、completed、failed状态时提供）
+        completed_at:
+          type: string
+          format: date-time
+          description: 任务完成时间（仅在completed状态时提供）
+        failed_at:
+          type: string
+          format: date-time
+          description: 任务失败时间（仅在failed状态时提供）
+        duration:
+          type: integer
+          minimum: 0
+          description: 任务执行持续时间（秒，仅在completed状态时提供）
+        current_stage:
+          type: string
+          description: 当前执行阶段描述（仅在running状态时提供）
+        progress:
+          type: integer
+          minimum: 0
+          maximum: 100
+          description: 执行进度百分比（仅在running状态时提供）
+        estimated_completion:
+          type: string
+          format: date-time
+          description: 预计完成时间（仅在pending、running状态时提供）
+        error_message:
+          type: string
+          description: 错误简要描述（仅在failed状态时提供）
+
+    ScanResultResponse:
+      type: object
+      required:
+        - task_id
+        - timestamp
+        - status
+        - repository
+      properties:
+        task_id:
+          type: string
+          pattern: '^scan_[0-9]{8}_[0-9]{3}$'
+          description: 任务唯一标识符
+        timestamp:
+          type: string
+          format: date-time
+          description: 结果生成时间戳
+        status:
+          type: string
+          enum: [completed, failed]
+          description: 任务最终状态
+        repository:
+          $ref: '#/components/schemas/RepositoryInfo'
+        project_info:
+          $ref: '#/components/schemas/ProjectInfo'
+        scan_results:
+          $ref: '#/components/schemas/ScanResults'
+        error:
+          $ref: '#/components/schemas/ScanError'
+
+    RepositoryInfo:
+      type: object
+      required:
+        - url
+        - branch
+      properties:
+        url:
+          type: string
+          format: uri
+          description: Git仓库URL
+        branch:
+          type: string
+          description: 扫描的分支名称
+        commit_sha:
+          type: string
+          pattern: '^[a-f0-9]{40}$|^[a-f0-9]{7}$'
+          description: 扫描时的提交SHA值（失败时可能为null）
+          nullable: true
+
+    ProjectInfo:
+      type: object
+      required:
+        - languages
+        - file_count
+        - total_lines
+      properties:
+        languages:
+          type: array
+          items:
+            type: string
+            enum: [Java, Python, JavaScript, Go, TypeScript, C, "C++", PHP, Ruby, "C#"]
+          description: 项目中检测到的编程语言
+          minItems: 1
+        file_count:
+          type: integer
+          minimum: 0
+          description: 扫描的文件总数
+        total_lines:
+          type: integer
+          minimum: 0
+          description: 代码总行数
+
+    ScanResults:
+      type: object
+      required:
+        - scan_tool
+        - scan_duration
+        - findings_count
+        - findings
+      properties:
+        scan_tool:
+          type: string
+          enum: [semgrep]
+          description: 使用的扫描工具
+        scan_duration:
+          type: integer
+          minimum: 1
+          description: 扫描耗时（秒）
+        findings_count:
+          type: integer
+          minimum: 0
+          description: 发现的问题总数
+        findings:
+          type: array
+          items:
+            $ref: '#/components/schemas/SecurityFinding'
+          description: 扫描发现的安全问题列表
+
+    SecurityFinding:
+      type: object
+      required:
+        - rule_id
+        - severity
+        - message
+        - file_path
+        - line_number
+        - code_snippet
+        - category
+      properties:
+        rule_id:
+          type: string
+          description: 扫描规则标识符
+          example: "java.lang.security.audit.sql-injection"
+        severity:
+          type: string
+          enum: [HIGH, MEDIUM, LOW]
+          description: 问题严重程度
+        message:
+          type: string
+          description: 问题描述信息
+          minLength: 10
+          maxLength: 500
+        file_path:
+          type: string
+          description: 相对文件路径
+          pattern: '^[^/].*'
+        line_number:
+          type: integer
+          minimum: 1
+          description: 问题所在行号
+        code_snippet:
+          type: string
+          description: 相关代码片段
+          maxLength: 1000
+        category:
+          type: string
+          enum: [security, quality, performance, maintainability]
+          description: 问题分类
+
+    ScanError:
+      type: object
+      required:
+        - code
+        - message
+        - details
+      properties:
+        code:
+          type: string
+          enum: 
+            - GIT_CLONE_FAILED
+            - SCAN_TIMEOUT
+            - UNSUPPORTED_LANGUAGE
+            - INTERNAL_ERROR
+          description: 错误代码
+        message:
+          type: string
+          description: 错误简要描述
+          minLength: 5
+          maxLength: 200
+        details:
+          type: string
+          description: 错误详细信息和建议解决方案
+          maxLength: 1000
+
+    ErrorResponse:
+      type: object
+      required:
+        - code
+        - message
+        - timestamp
+      properties:
+        code:
+          type: string
+          description: 标准化错误代码
+          enum:
+            - INVALID_REPOSITORY_URL
+            - MISSING_REQUIRED_FIELD
+            - RATE_LIMIT_EXCEEDED
+            - TASK_NOT_FOUND
+            - RESULTS_NOT_READY
+            - INTERNAL_SERVER_ERROR
+        message:
+          type: string
+          description: 用户友好的错误消息
+          minLength: 5
+          maxLength: 200
+        details:
+          type: string
+          description: 错误详细信息和解决建议
+          maxLength: 500
+        timestamp:
+          type: string
+          format: date-time
+          description: 错误发生时间
+
+  responses:
+    BadRequest:
+      description: 请求参数验证失败
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    
+    NotFound:
+      description: 请求的资源不存在
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    
+    TooEarly:
+      description: 请求的资源尚未准备好
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    
+    InternalServerError:
+      description: 服务器内部错误
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+  parameters:
+    TaskId:
+      name: task_id
+      in: path
+      required: true
+      description: 扫描任务的唯一标识符
+      schema:
+        type: string
+        pattern: '^scan_[0-9]{8}_[0-9]{3}$'
+        example: "scan_20240115_001"
+
+security: []
+
+externalDocs:
+  description: 完整的MVP规格说明书
+  url: https://docs.company.com/mvp-specification
