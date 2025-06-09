@@ -1,7 +1,8 @@
 # tests/unit/test_main.py
 
-from codesentinel.main import app
 from fastapi.testclient import TestClient
+
+from codesentinel.main import app
 
 client = TestClient(app)
 

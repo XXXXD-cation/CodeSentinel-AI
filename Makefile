@@ -1,159 +1,106 @@
-# CodeSentinel-AI Makefile
-.PHONY: help install dev-install test lint format clean build docker-build docker-up docker-down
+# Makefile for CodeSentinel-AI
+# A collection of commands for development, testing, and deployment.
 
-# 默认目标
+# ==============================================================================
+#  Help
+# ==============================================================================
+.DEFAULT_GOAL := help
+
+.PHONY: help
 help:
-	@echo "CodeSentinel-AI Development Commands"
-	@echo "====================================="
-	@echo "setup           - Initial project setup"
-	@echo "install         - Install dependencies"
-	@echo "dev-install     - Install development dependencies"
-	@echo "test            - Run tests"
-	@echo "test-cov        - Run tests with coverage"
-	@echo "lint            - Run linting checks"
-	@echo "format          - Format code"
-	@echo "security        - Run security checks"
-	@echo "clean           - Clean build artifacts"
-	@echo "build           - Build the project"
-	@echo "docker-build    - Build Docker image"
-	@echo "docker-up       - Start Docker services"
-	@echo "docker-down     - Stop Docker services"
-	@echo "docker-logs     - View Docker logs"
-	@echo "pre-commit      - Setup pre-commit hooks"
+	@echo "Usage: make <command>"
+	@echo ""
+	@echo "Commands:"
+	@echo "  setup                Install all dependencies and setup pre-commit hooks."
+	@echo "  install              Install production dependencies only."
+	@echo "  test                 Run tests and generate coverage report (as configured in pyproject.toml)."
+	@echo "  lint                 Run static analysis and code style checks."
+	@echo "  format               Automatically format all project code."
+	@echo "  security             Run security vulnerability checks and generate reports."
+	@echo "  clean                Remove temporary files and build artifacts."
+	@echo "  build                Build the distributable package."
+	@echo "  docker-build         Build the Docker image for the application."
+	@echo "  docker-up            Start services using Docker Compose."
+	@echo "  docker-down          Stop services using Docker Compose."
+	@echo "  docker-logs          Follow logs from Docker services."
+	@echo "  pre-commit-install   Install pre-commit hooks into your .git/hooks directory."
 
-# 项目初始化
-setup: install pre-commit
+
+# ==============================================================================
+#  Development Workflow
+# ==============================================================================
+.PHONY: setup install dev-install pre-commit-install
+setup: dev-install pre-commit-install
 	@echo "✅ Project setup complete!"
 
-# 安装依赖
 install:
-	@echo "📦 Installing dependencies..."
-	poetry install --no-dev
+	@echo "📦 Installing production dependencies..."
+	poetry install --no-dev --no-root
 
-# 安装开发依赖
 dev-install:
-	@echo "📦 Installing development dependencies..."
-	poetry install
+	@echo "📦 Installing all dependencies for development..."
+	poetry install --no-root
 
-# 运行测试
+pre-commit-install:
+	@echo "🔧 Installing pre-commit hooks..."
+	poetry run pre-commit install
+
+
+# ==============================================================================
+#  Quality Assurance
+# ==============================================================================
+.PHONY: test lint format security
 test:
-	@echo "🧪 Running tests..."
+	@echo "🧪 Running tests (with coverage enabled by default)..."
 	poetry run pytest
 
-# 运行测试并生成覆盖率报告
-test-cov:
-	@echo "🧪 Running tests with coverage..."
-	poetry run pytest --cov=src/codesentinel --cov-report=html --cov-report=term-missing
-
-# 代码质量检查
 lint:
-	@echo "🔍 Running linting checks..."
+	@echo "🔍 Running linters and static analysis..."
 	poetry run black --check .
-	poetry run isort --check-only .
 	poetry run ruff check .
 	poetry run mypy src/
 
-# 代码格式化
 format:
 	@echo "🎨 Formatting code..."
+	poetry run ruff check . --fix
+	poetry run ruff format .
 	poetry run black .
-	poetry run isort .
-	poetry run ruff --fix .
 
-# 安全检查
 security:
 	@echo "🔒 Running security checks..."
+	mkdir -p reports
 	poetry run bandit -r src/ -f json -o reports/bandit-report.json
 	poetry run pip-audit --format=json --output=reports/pip-audit-report.json
-	poetry run safety check
+	poetry run safety check --json --output reports/safety-report.json
 
-# 清理构建产物
+
+# ==============================================================================
+#  Build & Deployment
+# ==============================================================================
+.PHONY: clean build docker-build docker-up docker-down docker-logs
 clean:
-	@echo "🧹 Cleaning build artifacts..."
+	@echo "🧹 Cleaning build artifacts and temporary files..."
 	find . -type f -name "*.pyc" -delete
-	find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
-	find . -type d -name "*.egg-info" -exec rm -rf {} + 2>/dev/null || true
-	rm -rf build/ dist/ .coverage htmlcov/ .pytest_cache/ .mypy_cache/ .ruff_cache/
+	find . -type d -name "__pycache__" -exec rm -rf {} +
+	rm -rf build/ dist/ .coverage htmlcov/ reports/ .pytest_cache/ .mypy_cache/ .ruff_cache/ *.egg-info
 
-# 构建项目
 build: clean
-	@echo "🏗️ Building project..."
+	@echo "🏗️ Building project package..."
 	poetry build
 
-# 构建Docker镜像
 docker-build:
 	@echo "🐳 Building Docker image..."
 	docker-compose build
 
-# 启动Docker服务
 docker-up:
-	@echo "🚀 Starting Docker services..."
+	@echo "🚀 Starting services with Docker Compose..."
 	docker-compose up -d
 
-# 停止Docker服务
 docker-down:
-	@echo "🛑 Stopping Docker services..."
+	@echo "🛑 Stopping services with Docker Compose..."
 	docker-compose down
 
-# 查看Docker日志
 docker-logs:
-	@echo "📋 Viewing Docker logs..."
+	@echo "📋 Tailing logs from Docker services..."
 	docker-compose logs -f
 
-# 设置pre-commit钩子
-pre-commit:
-	@echo "🔧 Setting up pre-commit hooks..."
-	poetry run pre-commit install
-
-# 运行pre-commit检查
-pre-commit-run:
-	@echo "🔧 Running pre-commit checks..."
-	poetry run pre-commit run --all-files
-
-# 开发环境启动
-dev: docker-up
-	@echo "🚀 Development environment started!"
-	@echo "   - API: http://localhost:8000"
-	@echo "   - Docs: http://localhost:8000/docs"
-	@echo "   - Flower: http://localhost:5555"
-	@echo "   - Grafana: http://localhost:3000"
-	@echo "   - Prometheus: http://localhost:9090"
-
-# 生产环境构建
-prod-build:
-	@echo "🏭 Building for production..."
-	docker build --target production -t codesentinel-ai:latest .
-
-# 创建必要的目录
-create-dirs:
-	@echo "📁 Creating necessary directories..."
-	mkdir -p src/codesentinel/{agents,tools,core,api,tasks,models,utils}
-	mkdir -p tests/{unit,integration,performance}
-	mkdir -p docs/{api,user,dev}
-	mkdir -p data/{chroma,reports}
-	mkdir -p logs
-	mkdir -p monitoring/{prometheus,grafana}
-	mkdir -p nginx
-	mkdir -p scripts
-
-# 完整的项目初始化
-init: create-dirs dev-install pre-commit
-	@echo "🎉 Project initialization complete!"
-
-# 健康检查
-health:
-	@echo "🏥 Running health checks..."
-	@curl -f http://localhost:8000/health || echo "❌ API is not running"
-	@docker-compose ps
-
-# 运行性能测试
-perf-test:
-	@echo "⚡ Running performance tests..."
-	poetry run pytest tests/performance/ -v --benchmark-json=reports/benchmark.json
-
-# 生成报告
-report: test-cov security
-	@echo "📊 Generating reports..."
-	@echo "Coverage report: htmlcov/index.html"
-	@echo "Security report: reports/bandit-report.json"
-	@echo "Dependency audit: reports/pip-audit-report.json"
